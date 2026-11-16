@@ -175,6 +175,22 @@ table.rec td.n{text-align:center}
 .slide{display:flex;align-items:center;gap:8px;background:var(--accent-soft);border-radius:10px;padding:4px 10px}
 .slide b{font-size:12px;color:var(--accent)}
 .slide input{flex:1;height:24px;accent-color:var(--accent);min-width:0;margin:0}
+/* photos */
+.photo-slot{margin-top:2px}
+.ph-empty{display:flex;align-items:center;gap:12px;border:2px dashed #b9c6e4;border-radius:12px;padding:14px;color:var(--mat);background:#f7f9fe;cursor:pointer}
+.ph-empty span{display:flex;flex-direction:column;line-height:1.25}
+.ph-empty b{font-family:"Barlow Condensed",sans-serif;font-size:18px}
+.ph-empty small{font-size:13px;color:var(--muted)}
+.ph-empty:active{background:var(--mat-soft)}
+.ph-full{border-radius:12px;overflow:hidden;border:1px solid var(--line);background:#fff}
+.ph-full img{display:block;width:100%;max-height:340px;object-fit:cover}
+.ph-bar{display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--field);flex-wrap:wrap}
+.ph-bar span{flex:1;font-size:13px;font-weight:600;color:var(--muted);min-width:120px}
+.ph-bar .btn{cursor:pointer}
+.row-img figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:4px}
+.row-img figcaption{font-size:12px;color:var(--muted);font-weight:600}
+.row-img.with-photo{gap:16px;flex-wrap:wrap}
+.row-img .row-photo{max-height:260px;width:auto;max-width:100%;border-radius:8px}
 /* juge */
 .crit{margin:14px 0 4px}
 .crit h4{margin:0 0 6px;font-size:15px}
@@ -590,7 +606,7 @@ function blankJuge(){return {juge:'',eleve:'',c:{}}}
 function blank(){return {app:'acrosport',id:'L'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),classe:'',groupe:'',date:'',membres:['','','','','',''],
  projet:{theme:'',musique:'',justifMusique:'',renforts:'',pointsForts:'',brouillon:'',degreProf:''},
  figures:FIG_ROWS.map(()=>({code:'',parts:{}})),elements:ELT_ROWS.map(()=>({code:'',who:[]})),
- schema:'',juges:[blankJuge(),blankJuge()],bilans:{},eval:{},updated:Date.now()}}
+ schema:'',juges:[blankJuge(),blankJuge()],bilans:{},eval:{},photos:{},updated:Date.now()}}
 function normalize(s){
  const b=blank();
  for(const k in b) if(s[k]===undefined||s[k]===null) s[k]=b[k];
@@ -605,8 +621,17 @@ function normalize(s){
  return s;
 }
 let store={}, state;
+/* stockage : IndexedDB (grande capacité, pour les photos), repli sur localStorage */
+let idb=null;
+function idbOpen(){return new Promise(res=>{try{const r=indexedDB.open('acrosport',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>res(null);r.onblocked=()=>res(null);}catch(e){res(null)}});}
+function idbGet(k){return new Promise(res=>{if(!idb)return res(null);try{const q=idb.transaction('kv').objectStore('kv').get(k);q.onsuccess=()=>res(q.result??null);q.onerror=()=>res(null);}catch(e){res(null)}});}
+function idbSet(k,v){return new Promise(res=>{if(!idb)return res(false);try{const t=idb.transaction('kv','readwrite');t.objectStore('kv').put(v,k);t.oncomplete=()=>res(true);t.onerror=t.onabort=()=>res(false);}catch(e){res(false)}});}
+async function persist(){const txt=JSON.stringify(store);lsSet(CUR,state.id);
+ if(idb){const ok=await idbSet(KEY,txt);if(ok){try{localStorage.removeItem(KEY)}catch(e){}return true;}}
+ return lsSet(KEY,txt);}
+let rawStore=null;
 function loadStore(){
- try{store=JSON.parse(lsGet(KEY)||'{}')||{}}catch(e){store={}}
+ try{store=JSON.parse(rawStore||'{}')||{}}catch(e){store={}}
  const cur=lsGet(CUR);
  state=store[cur]||Object.values(store).sort((a,b)=>(b.updated||0)-(a.updated||0))[0];
  if(!state){state=blank();store[state.id]=state;}
@@ -616,7 +641,7 @@ let saveT;
 function save(){
  state.updated=Date.now(); store[state.id]=state;
  clearTimeout(saveT); $('#saved').textContent='…';
- saveT=setTimeout(()=>{const ok=lsSet(KEY,JSON.stringify(store));lsSet(CUR,state.id);$('#saved').textContent=ok?'Enregistré ✓':'⚠ Non enregistré';},350);
+ saveT=setTimeout(async()=>{const ok=await persist();$('#saved').textContent=ok?'Enregistré ✓':'⚠ Non enregistré';},350);
 }
 const members=()=>state.membres.map((n,i)=>({i,name:(n||'').trim()})).filter(m=>m.name);
 const nameOf=i=>(state.membres[i]||'').trim();
@@ -682,7 +707,7 @@ $('#fileIn').addEventListener('change',async e=>{
 });
 function fileName(){const n=[state.classe,state.groupe].filter(Boolean).join('_')||'groupe';return 'Acrosport_'+n.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z0-9_-]+/g,'-');}
 $('#btnSend').addEventListener('click',async()=>{
- state.updated=Date.now();store[state.id]=state;lsSet(KEY,JSON.stringify(store));
+ state.updated=Date.now();store[state.id]=state;persist();
  const name=fileName()+'.json';
  const blob=new Blob([JSON.stringify(state)],{type:'application/json'});
  let file=null;try{file=new File([blob],name,{type:'application/json'});}catch(e){}
@@ -814,6 +839,7 @@ function figCard(c,modal){
  const d=FIGDATA[c],a=analyse(c);
  return `<div class="fig"><div class="fig-h"><span class="code">${c}</span><span class="badge ${a.letter}">${a.letter}</span><span class="pts">${fmt(a.val)} pt</span>${modal?'':`<button class="btn alt small add" data-show="${c}">Agrandir</button>`}</div>
  <div class="fig-img"><img src="data:image/webp;base64,${d.i}" alt="Croquis ${c}" style="width:${Math.round(d.w*(modal?1.9:1.5))}px"></div>
+ <div class="photo-slot" data-ph="${c}">${photoHTML(c)}</div>
  <div class="fig-t">${d.t}</div>
  ${d.f.length?`<div class="fig-f"><b>Fautes typiques</b><ul>${d.f.map(x=>`<li>${x}</li>`).join('')}</ul></div>`:''}
  <button class="btn acc choose" data-pick="${c}">${pickLabel(c)}</button>
@@ -862,7 +888,42 @@ function targetsFor(c){const a=analyse(c);const all=FIG_ROWS.map((r,i)=>'f'+i).c
 function pickLabel(c){if(pickTarget){return rowAccepts(pickTarget,analyse(c))?'Choisir '+c+' pour « '+rowLabel(pickTarget)+' »':'Choisir '+c;}return 'Choisir '+c;}
 function rowImg(sel,code){const el=$(sel);if(!el)return;const d=code&&FIGDATA[code];
  if(!d){el.hidden=true;el.innerHTML='';el.removeAttribute('data-show');return;}
- el.hidden=false;el.dataset.show=code;el.innerHTML=`<img src="data:image/webp;base64,${d.i}" alt="Croquis ${code}" style="width:${Math.round(d.w*1.6)}px">`;}
+ const ph=state.photos&&state.photos[code];
+ el.hidden=false;el.dataset.show=code;el.classList.toggle('with-photo',!!ph);
+ el.innerHTML=`<figure><img src="data:image/webp;base64,${d.i}" alt="Croquis ${code}" style="width:${Math.round(d.w*1.6)}px"><figcaption>Croquis</figcaption></figure>`+(ph?`<figure><img class="row-photo" src="${ph.d}" alt="Photo de notre ${code}"><figcaption>Notre figure</figcaption></figure>`:'');}
+/* ---------- Photos des figures ---------- */
+const CAM='<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.6"/></svg>';
+function photoHTML(c){
+ const ph=state&&state.photos&&state.photos[c];
+ const inp=`<input type="file" accept="image/*" data-phin="${c}" hidden>`;
+ if(!ph) return `<label class="ph-empty">${inp}${CAM}<span><b>Prendre notre ${c} en photo</b><small>Photo de la figure réalisée par le groupe</small></span></label>`;
+ const dt=new Date(ph.t).toLocaleDateString('fr-FR',{day:'numeric',month:'long'});
+ return `<div class="ph-full"><img src="${ph.d}" alt="Photo de notre ${c}"><div class="ph-bar"><span>Notre figure · ${dt}</span><label class="btn alt small">${inp}Reprendre</label><button class="btn alt small" data-phdel="${c}">Supprimer</button></div></div>`;
+}
+function refreshPhoto(c){
+ document.querySelectorAll(`[data-ph="${c}"]`).forEach(el=>el.innerHTML=photoHTML(c));
+ state.figures.forEach((f,i)=>{const a=analyse(f.code);if(a&&!a.err&&a.code===c)updateFig(i);});
+ state.elements.forEach((x,i)=>{const a=analyse(x.code);if(a&&!a.err&&a.code===c)updateElt(i);});
+}
+function shrink(file){return new Promise((res,rej)=>{const url=URL.createObjectURL(file),im=new Image();
+ im.onload=()=>{const M=720,k=Math.min(1,M/Math.max(im.naturalWidth,im.naturalHeight));const cv=document.createElement('canvas');
+  cv.width=Math.round(im.naturalWidth*k);cv.height=Math.round(im.naturalHeight*k);cv.getContext('2d').drawImage(im,0,0,cv.width,cv.height);
+  URL.revokeObjectURL(url);res(cv.toDataURL('image/jpeg',0.62));};
+ im.onerror=()=>{URL.revokeObjectURL(url);rej();};im.src=url;});}
+document.addEventListener('change',async e=>{
+ const inp=e.target.closest&&e.target.closest('[data-phin]');if(!inp||!inp.files||!inp.files[0])return;
+ const c=inp.dataset.phin;
+ try{
+  const d=await shrink(inp.files[0]);
+  if(!state.photos)state.photos={};
+  const prev=state.photos[c];state.photos[c]={d,t:Date.now()};state.updated=Date.now();store[state.id]=state;
+  if(!(await persist())){if(prev)state.photos[c]=prev;else delete state.photos[c];
+   alert('La mémoire de la tablette est pleine : la photo n’a pas été enregistrée. Supprime une ancienne photo et recommence.');return;}
+  save();refreshPhoto(c);toast('Photo de '+c+' enregistrée');
+ }catch(err){alert('Impossible de lire cette photo. Réessaie.');}
+});
+document.addEventListener('click',e=>{const b=e.target.closest('[data-phdel]');if(!b)return;const c=b.dataset.phdel;
+ if(!confirm('Supprimer la photo de '+c+' ?'))return;delete state.photos[c];save();refreshPhoto(c);});
 function assign(t,c){
  const i=+t.slice(1);
  if(t[0]==='f'){state.figures[i].code=c;const inp=$(`[data-figcode="${i}"]`);if(inp)inp.value=c;updateFig(i);}
@@ -1155,7 +1216,9 @@ function renderAll(){
  $('#saved').textContent='';
 }
 renderRepFilters();renderRep();
-loadStore();renderAll();
+(async()=>{idb=await idbOpen();rawStore=await idbGet(KEY);if(rawStore==null)rawStore=lsGet(KEY);
+ try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
+ loadStore();renderAll();})();
 window.__acro={analyse};
 })();
 </script>
